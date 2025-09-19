@@ -145,11 +145,13 @@ def compute_minute_aggregation(minutes_df: pd.DataFrame) -> pd.DataFrame:
         'input_tokens': 'sum',
         'output_tokens': 'sum', 
         'total_tokens': 'sum'
-    }).reset_index()
-    
+    })
+    # Build complete minute index from first to last
+    full_index = pd.date_range(minute_agg.index.min(), minute_agg.index.max(), freq='T')
+    minute_agg = minute_agg.reindex(full_index, fill_value=0)
+    minute_agg = minute_agg.reset_index().rename(columns={'index': 'minute'})
     # Add tokens_per_minute column for backward compatibility (like original app)
     minute_agg['tokens_per_minute'] = minute_agg['total_tokens']
-    
     # Add date column
     minute_agg['date'] = minute_agg['minute'].dt.date
     

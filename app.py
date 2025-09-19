@@ -219,42 +219,63 @@ def main():
     
     # PTU Analysis
     st.header("PTU Cost Analysis")
+
+    # Store analysis results in session_state
+    if "ptu_results" not in st.session_state:
+        st.session_state.ptu_results = None
+        st.session_state.ptu_formatted = None
+        st.session_state.ptu_optimal_idx = None
+        st.session_state.ptu_optimal_config = None
+
+    run_analysis = st.button("Run PTU Analysis", type="primary")
+    if run_analysis or st.session_state.ptu_results is not None:
+        if run_analysis:
+            # Calculate output weight for PTU capacity
+            output_weight = get_price_ratio(input_price, output_price)
+            # Create progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            def update_progress(progress):
+                progress_bar.progress(progress)
+            def update_status(status):
+                status_text.text(status)
+            with st.spinner("Running PTU simulation..."):
+                results_df = run_ptu_analysis(
+                    request_data=processed_df,
+                    minute_series=minute_series,
+                    min_ptu_count=min_ptu_count,
+                    max_ptu_count=max_ptu_count,
+                    ptu_capacity_tpm=ptu_capacity_tpm,
+                    final_ptu_price=final_ptu_price,
+                    input_price=input_price,
+                    output_price=output_price,
+                    dataset_days=dataset_days,
+                    output_weight=output_weight,
+                    progress_callback=update_progress,
+                    status_callback=update_status
+                )
+                formatted_df = format_analysis_results(results_df)
+                # Find optimal config
+                paygo_only_cost = results_df[results_df['num_ptus'] == 0]['total_monthly_cost'].iloc[0]
+                ptu_configs = results_df[results_df['num_ptus'] > 0].copy()
+                ptu_configs['cost_diff'] = ptu_configs['total_monthly_cost'] - paygo_only_cost
+                above_paygo = ptu_configs[ptu_configs['cost_diff'] >= 0]
+                if not above_paygo.empty:
+                    closest_idx = above_paygo['cost_diff'].idxmin()
+                else:
+                    closest_idx = ptu_configs['cost_diff'].abs().idxmin()
+                optimal_config = results_df.loc[closest_idx]
+                # Store in session_state
+                st.session_state.ptu_results = results_df
+                st.session_state.ptu_formatted = formatted_df
+                st.session_state.ptu_optimal_idx = closest_idx
+                st.session_state.ptu_optimal_config = optimal_config
+        # Use cached results
+        results_df = st.session_state.ptu_results
+        formatted_df = st.session_state.ptu_formatted
+        closest_idx = st.session_state.ptu_optimal_idx
+        optimal_config = st.session_state.ptu_optimal_config
     
-    if st.button("Run PTU Analysis", type="primary"):
-        
-        # Calculate output weight for PTU capacity
-        output_weight = get_price_ratio(input_price, output_price)
-        
-        # Create progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        def update_progress(progress):
-            progress_bar.progress(progress)
-        
-        def update_status(status):
-            status_text.text(status)
-        
-        with st.spinner("Running PTU simulation..."):
-            # Run the analysis
-            results_df = run_ptu_analysis(
-                request_data=processed_df,
-                minute_series=minute_series,
-                min_ptu_count=min_ptu_count,
-                max_ptu_count=max_ptu_count,
-                ptu_capacity_tpm=ptu_capacity_tpm,
-                final_ptu_price=final_ptu_price,
-                input_price=input_price,
-                output_price=output_price,
-                dataset_days=dataset_days,
-                output_weight=output_weight,
-                progress_callback=update_progress,
-                status_callback=update_status
-            )
-        
-        # Format results for display
-        formatted_df = format_analysis_results(results_df)
-        
         st.subheader('PTU Analysis Results')
         
         # Display results table with formatted numbers
@@ -276,23 +297,11 @@ def main():
         st.dataframe(display_df, height=400, use_container_width=True)
         
         # Charts
-        st.subheader('Cost Analysis Charts')
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Monthly Costs by PTU Count**")
-            cost_chart_df = results_df.set_index('num_ptus')[['ptu_monthly_cost', 'paygo_monthly_cost']]
-            cost_chart_df.columns = ['PTU Cost', 'PAYGO Cost']
-            st.line_chart(cost_chart_df)
-        
-        with col2:
-            st.write("**Token Distribution by PTU Count**")
-            token_chart_df = results_df.set_index('num_ptus')[
-                ['ptu_input_tokens', 'ptu_output_tokens', 'paygo_input_tokens', 'paygo_output_tokens']
-            ]
-            token_chart_df.columns = ['PTU Input', 'PTU Output', 'PAYGO Input', 'PAYGO Output']
-            st.bar_chart(token_chart_df)
+        st.subheader('Token Distribution by PTU Count')
+        token_chart_df = results_df.set_index('num_ptus')[['ptu_input_tokens', 'ptu_output_tokens', 'paygo_input_tokens', 'paygo_output_tokens', 'total_monthly_cost']]
+        token_chart_df.columns = ['PTU Input', 'PTU Output', 'PAYGO Input', 'PAYGO Output', 'Total Cost']
+        st.bar_chart(token_chart_df[['PTU Input', 'PTU Output', 'PAYGO Input', 'PAYGO Output']])
+
         
         # Traffic optimization insights
         st.subheader("Traffic Optimization")
@@ -350,6 +359,29 @@ def main():
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
+        
+        # TPM over time chart with PTU Capacity flat line
+        if not ptu_configs.empty:
+            st.subheader("TPM Over Time vs PTU Capacity")
+            # Get the optimized PTU capacity value
+            ptu_capacity_flat = optimal_config['ptu_capacity_tpm']
+            # Prepare data for chart
+            tpm_df = minute_series[['minute', 'tokens_per_minute']].copy()
+            tpm_df['PTU Capacity'] = optimal_config['ptu_capacity_tpm']
+            tpm_df = tpm_df.rename(columns={'tokens_per_minute': 'Actual TPM'})
+            tpm_df = tpm_df.set_index('minute')
+            tpm_df_reset = tpm_df.reset_index()
+            tpm_df_reset['date'] = tpm_df_reset['minute'].dt.date
+            available_dates = sorted(tpm_df_reset['date'].unique())
+            selected_date = st.selectbox("Select day to view TPM chart", available_dates, index=0)
+            day_df = tpm_df_reset[tpm_df_reset['date'] == selected_date].set_index('minute')
+            st.line_chart(day_df[['Actual TPM', 'PTU Capacity']])
+
+            # Summary statistics for TPM vs PTU Capacity (for selected day)
+            median_tpm = day_df['Actual TPM'].median()
+            below_ptu_count = (day_df['Actual TPM'] < optimal_config['ptu_capacity_tpm']).sum()
+            total_minutes = len(day_df)
+            st.info(f"**Median TPM:** {median_tpm:,.0f}\n**Minutes below PTU Capacity:** {below_ptu_count:,} out of {total_minutes:,} ({below_ptu_count/total_minutes:.1%})")
         
         # Download link
         st.markdown(
