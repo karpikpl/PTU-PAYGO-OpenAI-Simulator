@@ -334,11 +334,22 @@ def main():
                 )
             
             with col3:
-                st.metric(
-                    "Total Monthly Cost",
-                    f"${optimal_config['total_monthly_cost']:,.2f}",
-                    f"{((optimal_config['total_monthly_cost'] - paygo_only_cost) / paygo_only_cost * 100):+.1f}% vs PAYGO"
-                )
+                cost_diff_pct = ((optimal_config['total_monthly_cost'] - paygo_only_cost) / paygo_only_cost * 100)
+                is_more_expensive = optimal_config['total_monthly_cost'] > paygo_only_cost
+                
+                # Choose badge color: orange if more expensive, green if cheaper
+                badge_color = "#ff8c00" if is_more_expensive else "#28a745"  # Orange or Green
+                badge_text = f"{cost_diff_pct:+.1f}% vs PAYGO"
+                
+                st.markdown(f"""
+                <div style="text-align: left;">
+                    <p style="font-size: 14px; color: #8e8ea0; margin-bottom: 4px;">Total Monthly Cost</p>
+                    <p style="font-size: 28px; font-weight: 600; margin-bottom: 4px;">${optimal_config['total_monthly_cost']:,.2f}</p>
+                    <span style="background-color: {badge_color}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">
+                        {badge_text}
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
         
         # Download link
         st.markdown(
